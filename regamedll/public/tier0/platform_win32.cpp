@@ -26,42 +26,32 @@
 *
 */
 
-#pragma once
+#include "precompiled.h"
 
-#include "version/appversion.h"
+bool Plat_IsInDebugSession()
+{
+	return IsDebuggerPresent() != FALSE;
+}
 
-#include "osconfig.h"
-#include "basetypes.h"
+void Plat_OutputDebugStringRaw(const char *psz)
+{
+	OutputDebugString(psz);
+}
 
-#include "archtypes.h"
-#ifdef HAVE_SSE
-#include "sse_mathfun.h"
-#endif
-#include "asmlib.h"
+void Plat_OutputDebugString(const char *psz)
+{
+	static char buf[4096];
+	int len = Q_snprintf(buf, sizeof(buf), "%s", psz);
+	Assert(len > 0);
+	OutputDebugString(buf);
+}
 
-#include "MemPool.h"
+void Plat_DebugString(const char *psz)
+{
+	Plat_OutputDebugString(psz);
+}
 
-#include "engine.h"
-
-// Valve libs stuff
-#include "tier0/platform.h"
-
-// Asserts are always compiled in pre-released or nightly builds
-#if !defined(_RELEASEPROD)
-	#define DBGFLAG_ASSERT		// Turns Assert on or off
-	#define DBGFLAG_ASSERTFATAL	// Turns AssertFatal on or off
-	#define DBGFLAG_ASSERTDLG	// Turns assert dialogs on or off and debug breaks on or off when not under the debugger
-								// (Dialogs will always be on when process is being debugged.)
-#endif
-
-#include "tier0/dbg.h"
-
-#include "dlls.h"
-#include "interface.h"
-#include "hookchains_impl.h"
-#include "regamedll.h"
-#include "FileSystem.h"
-
-// API
-#include "API/CSInterfaces.h"
-#include "API/CAPI_Impl.h"
+const char *Plat_GetCommandLine()
+{
+	return GetCommandLineA();
+}

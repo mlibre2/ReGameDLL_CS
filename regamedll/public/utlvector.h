@@ -30,6 +30,8 @@
 
 #include "utlmemory.h"
 
+#include <algorithm>
+
 template<class T>
 class CUtlVector
 {
@@ -126,9 +128,23 @@ public:
 	// Set the size by which it grows when it needs to allocate more memory.
 	void SetGrowSize(int size);
 
+	// sort using std:: and expecting a "<" function to be defined for the type
+	void Sort();
+	void Sort(bool (*pfnLessFunc)(const T &src1, const T &src2));
+
+#if defined(_WIN32)
+	void Sort(int (__cdecl *pfnCompare)(const T *, const T *));
+#else
+	void Sort(int (*pfnCompare)(const T *, const T *));
+#endif
+
+	// sort using std:: with a predicate. e.g. [] -> bool (const T &a, const T &b) const { return a < b; }
+	template <class F>
+	void SortPredicate(F &&predicate);
+
 protected:
 	// Can't copy this unless we explicitly do it!
-	CUtlVector(CUtlVector const &vec) { assert(0); }
+	CUtlVector(CUtlVector const &vec) { Assert(0); }
 
 	// Grows the vector
 	void GrowVector(int num = 1);
@@ -187,28 +203,28 @@ inline CUtlVector<T> &CUtlVector<T>::operator=(const CUtlVector<T> &other)
 template <class T>
 inline T &CUtlVector<T>::operator[](int i)
 {
-	assert(IsValidIndex(i));
+	DbgAssert(IsValidIndex(i));
 	return m_Memory[i];
 }
 
 template <class T>
 inline T const &CUtlVector<T>::operator[](int i) const
 {
-	assert(IsValidIndex(i));
+	DbgAssert(IsValidIndex(i));
 	return m_Memory[i];
 }
 
 template <class T>
 inline T &CUtlVector<T>::Element(int i)
 {
-	assert(IsValidIndex(i));
+	DbgAssert(IsValidIndex(i));
 	return m_Memory[i];
 }
 
 template <class T>
 inline T const &CUtlVector<T>::Element(int i) const
 {
-	assert(IsValidIndex(i));
+	DbgAssert(IsValidIndex(i));
 	return m_Memory[i];
 }
 
@@ -285,7 +301,7 @@ void CUtlVector<T>::EnsureCount(int num)
 template <class T>
 void CUtlVector<T>::ShiftElementsRight(int elem, int num)
 {
-	assert(IsValidIndex(elem) || (m_Size == 0) || (num == 0));
+	DbgAssert(IsValidIndex(elem) || (m_Size == 0) || (num == 0));
 	int numToMove = m_Size - elem - num;
 	if ((numToMove > 0) && (num > 0))
 		memmove(&Element(elem+num), &Element(elem), numToMove * sizeof(T));
@@ -294,7 +310,7 @@ void CUtlVector<T>::ShiftElementsRight(int elem, int num)
 template <class T>
 void CUtlVector<T>::ShiftElementsLeft(int elem, int num)
 {
-	assert(IsValidIndex(elem) || (m_Size == 0) || (num == 0));
+	DbgAssert(IsValidIndex(elem) || (m_Size == 0) || (num == 0));
 	int numToMove = m_Size - elem - num;
 	if ((numToMove > 0) && (num > 0))
 	{
@@ -329,7 +345,7 @@ template <class T>
 int CUtlVector<T>::InsertBefore(int elem)
 {
 	// Can insert at the end
-	assert((elem == Count()) || IsValidIndex(elem));
+	DbgAssert((elem == Count()) || IsValidIndex(elem));
 
 	GrowVector();
 	ShiftElementsRight(elem);
@@ -360,7 +376,7 @@ template< class T >
 int CUtlVector<T>::InsertBefore(int elem, T const &src)
 {
 	// Can insert at the end
-	assert((elem == Count()) || IsValidIndex(elem));
+	DbgAssert((elem == Count()) || IsValidIndex(elem));
 
 	GrowVector();
 	ShiftElementsRight(elem);
@@ -434,7 +450,7 @@ inline int CUtlVector<T>::InsertMultipleBefore(int elem, int num, const T *pToIn
 		return elem;
 
 	// Can insert at the end
-	assert((elem == Count()) || IsValidIndex(elem));
+	DbgAssert((elem == Count()) || IsValidIndex(elem));
 
 	GrowVector(num);
 	ShiftElementsRight(elem, num);
@@ -480,7 +496,7 @@ bool CUtlVector<T>::HasElement(T const &src)
 template <class T>
 void CUtlVector<T>::FastRemove(int elem)
 {
-	assert(IsValidIndex(elem));
+	DbgAssert(IsValidIndex(elem));
 
 	Destruct(&Element(elem));
 	if (m_Size > 0)
@@ -511,8 +527,8 @@ void CUtlVector<T>::FindAndRemove(T const &src)
 template <class T>
 void CUtlVector<T>::RemoveMultiple(int elem, int num)
 {
-	assert(IsValidIndex(elem));
-	assert(elem + num <= Count());
+	DbgAssert(IsValidIndex(elem));
+	DbgAssert(elem + num <= Count());
 
 	for (int i = elem + num; --i >= elem;)
 		Destruct(&Element(i));
@@ -561,4 +577,56 @@ template <class T>
 void CUtlVector<T>::SetGrowSize(int size)
 {
 	m_Memory.SetGrowSize(size);
+}
+
+// Sort methods
+template <class T>
+void CUtlVector<T>::Sort()
+{
+	std::sort(Base(), Base() + Count());
+}
+
+template <class T>
+void CUtlVector<T>::Sort(bool (*pfnLessFunc)(const T &src1, const T &src2))
+{
+	std::sort(Base(), Base() + Count(),
+		[pfnLessFunc](const T &a, const T &b) -> bool
+		{
+			if (&a == &b)
+				return false;
+
+			return (*pfnLessFunc)(a, b);
+		});
+}
+
+#if defined(_WIN32)
+
+template <class T>
+void CUtlVector<T>::Sort(int (__cdecl *pfnCompare)(const T *, const T *))
+{
+	typedef int (__cdecl *QSortCompareFunc_t)(const void *, const void *);
+	if (Count() <= 1)
+		return;
+
+	qsort(Base(), Count(), sizeof(T), (QSortCompareFunc_t)(pfnCompare));
+}
+
+#else // #if defined(_LINUX)
+
+template <class T>
+void CUtlVector<T>::Sort(int (*pfnCompare)(const T *, const T *))
+{
+	typedef int (*QSortCompareFunc_t)(const void *, const void *);
+	if (Count() <= 1)
+		return;
+
+	qsort(Base(), Count(), sizeof(T), (QSortCompareFunc_t)(pfnCompare));
+}
+#endif // #if defined(_LINUX)
+
+template <class T>
+template <class F>
+void CUtlVector<T>::SortPredicate(F &&predicate)
+{
+	std::sort(Base(), Base() + Count(), predicate);
 }

@@ -20,6 +20,8 @@
 #include "tier0/platform.h"
 #include "tier0/dbg.h"
 
+#include <algorithm>
+
 #define FOR_EACH_ARRAY(vecName, iteratorName)\
 	for (int iteratorName = 0; (vecName).IsUtlArray && iteratorName < (vecName).Count(); iteratorName++)
 
@@ -70,6 +72,20 @@ public:
 	void FillWithValue(const T &src);
 
 	bool HasElement(const T &src) const;
+
+	// sort using std:: and expecting a "<" function to be defined for the type
+	void Sort();
+	void Sort(bool (*pfnLessFunc)(const T &src1, const T &src2));
+
+#if defined(_WIN32)
+	void Sort(int (__cdecl *pfnCompare)(const T *, const T *));
+#else
+	void Sort(int (*pfnCompare)(const T *, const T *));
+#endif
+
+	// sort using std:: with a predicate. e.g. [] -> bool (const T &a, const T &b) const { return a < b; }
+	template <class F>
+	void SortPredicate(F &&predicate);
 
 protected:
 	T m_Memory[MAX_SIZE];
@@ -128,28 +144,28 @@ inline const T *CUtlArray<T, MAX_SIZE>::Base() const
 template <typename T, size_t MAX_SIZE>
 inline T &CUtlArray<T, MAX_SIZE>::operator[](int i)
 {
-	Assert(IsValidIndex(i));
+	DbgAssert(IsValidIndex(i));
 	return m_Memory[i];
 }
 
 template <typename T, size_t MAX_SIZE>
 inline const T &CUtlArray<T, MAX_SIZE>::operator[](int i) const
 {
-	Assert(IsValidIndex(i));
+	DbgAssert(IsValidIndex(i));
 	return m_Memory[i];
 }
 
 template <typename T, size_t MAX_SIZE>
 inline T &CUtlArray<T, MAX_SIZE>::Element(int i)
 {
-	Assert(IsValidIndex(i));
+	DbgAssert(IsValidIndex(i));
 	return m_Memory[i];
 }
 
 template <typename T, size_t MAX_SIZE>
 inline const T &CUtlArray<T, MAX_SIZE>::Element(int i) const
 {
-	Assert(IsValidIndex(i));
+	DbgAssert(IsValidIndex(i));
 	return m_Memory[i];
 }
 
@@ -180,10 +196,62 @@ inline int CUtlArray<T, MAX_SIZE>::InvalidIndex()
 	return -1;
 }
 
+// Sort methods
+template <typename T, size_t MAX_SIZE>
+void CUtlArray<T, MAX_SIZE>::Sort()
+{
+	std::sort(Base(), Base() + Count());
+}
+
+template <typename T, size_t MAX_SIZE>
+void CUtlArray<T, MAX_SIZE>::Sort(bool (*pfnLessFunc)(const T &src1, const T &src2))
+{
+	std::sort(Base(), Base() + Count(),
+		[pfnLessFunc](const T &a, const T &b) -> bool
+		{
+			if (&a == &b)
+				return false;
+
+			return (*pfnLessFunc)(a, b);
+		});
+}
+
+#if defined(_WIN32)
+
+template <typename T, size_t MAX_SIZE>
+void CUtlArray<T, MAX_SIZE>::Sort(int (__cdecl *pfnCompare)(const T *, const T *))
+{
+	typedef int (__cdecl *QSortCompareFunc_t)(const void *, const void *);
+	if (Count() <= 1)
+		return;
+
+	qsort(Base(), Count(), sizeof(T), (QSortCompareFunc_t)(pfnCompare));
+}
+
+#else // #if defined(_LINUX)
+
+template <typename T, size_t MAX_SIZE>
+void CUtlArray<T, MAX_SIZE>::Sort(int (*pfnCompare)(const T *, const T *))
+{
+	typedef int (*QSortCompareFunc_t)(const void *, const void *);
+	if (Count() <= 1)
+		return;
+
+	qsort(Base(), Count(), sizeof(T), (QSortCompareFunc_t)(pfnCompare));
+}
+#endif // #if defined(_LINUX)
+
+template <typename T, size_t MAX_SIZE>
+template <class F>
+void CUtlArray<T, MAX_SIZE>::SortPredicate(F &&predicate)
+{
+	std::sort(Base(), Base() + Count(), predicate);
+}
+
 template <typename T, size_t MAX_SIZE>
 void CUtlArray<T, MAX_SIZE>::CopyArray(const T *pArray, size_t count)
 {
-	Assert(count < MAX_SIZE);
+	DbgAssert(count < MAX_SIZE);
 
 	for (size_t n = 0; n < count; n++)
 		m_Memory[n] = pArray[n];
