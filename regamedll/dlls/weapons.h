@@ -35,12 +35,16 @@ const float MAX_DIST_RELOAD_SOUND = 512.0f;
 
 #define MAX_WEAPONS                 32
 
-#define ITEM_FLAG_SELECTONEMPTY     BIT(0)
-#define ITEM_FLAG_NOAUTORELOAD      BIT(1)
-#define ITEM_FLAG_NOAUTOSWITCHEMPTY BIT(2)
-#define ITEM_FLAG_LIMITINWORLD      BIT(3)
-#define ITEM_FLAG_EXHAUSTIBLE       BIT(4) // A player can totally exhaust their ammo supply and lose this weapon
-#define ITEM_FLAG_NOFIREUNDERWATER  BIT(5)
+#define ITEM_FLAG_SELECTONEMPTY     		BIT(0)
+#define ITEM_FLAG_NOAUTORELOAD      		BIT(1)
+#define ITEM_FLAG_NOAUTOSWITCHEMPTY 		BIT(2)
+#define ITEM_FLAG_LIMITINWORLD      		BIT(3)
+#define ITEM_FLAG_EXHAUSTIBLE       		BIT(4) // A player can totally exhaust their ammo supply and lose this weapon
+#define ITEM_FLAG_NOFIREUNDERWATER  		BIT(5)
+#define ITEM_FLAG_EXHAUST_SECONDARYAMMO		BIT(6) // A player will exhaust weapon's secondary ammo supply if dropped (ITEM_FLAG_EXHAUSTIBLE does both)
+
+// if someone has an idea for another flag pack it here, so client prediction will not be screwed (or something) if PLAY_GAMEDLL is defined
+#define ITEM_FLAG_CUSTOM	(ITEM_FLAG_NOFIREUNDERWATER | ITEM_FLAG_EXHAUST_SECONDARYAMMO)
 
 #define WEAPON_IS_ONTARGET          0x40
 
@@ -473,6 +477,9 @@ public:
 public:
 	BOOL IsEmpty();
 	int GiveAmmo(int iCount, char *szName, int iMax, int *pIndex = nullptr);
+	int GetAmmoIndex(const char *psz) const;
+	bool GiveAmmoToPlayer(CBasePlayer *pPlayer, CBasePlayerWeapon *pWeapon,
+		int iCurrentAmmo, const char *pszAmmo, int iMaxAmmo, CBasePlayerItem **pGivenItem = NULL);
 
 	void EXPORT Kill();
 	void EXPORT BombThink();
@@ -1265,7 +1272,7 @@ inline float CKnife::KnifeSwingDamage(bool fast) const	{ return fast ? m_flSwing
 inline float CKnife::KnifeStabDistance() const			{ return m_flStabDistance; }
 inline float CKnife::KnifeSwingDistance() const			{ return m_flSwingDistance; }
 inline float CKnife::KnifeBackStabMultiplier() const	{ return m_flBackStabMultiplier; }
-#else 
+#else
 inline float CKnife::KnifeStabDamage() const			{ return KNIFE_STAB_DAMAGE; }
 inline float CKnife::KnifeSwingDamage(bool fast) const	{ return fast ? KNIFE_SWING_DAMAGE_FAST : KNIFE_SWING_DAMAGE; }
 inline float CKnife::KnifeStabDistance() const			{ return KNIFE_STAB_DISTANCE; }
