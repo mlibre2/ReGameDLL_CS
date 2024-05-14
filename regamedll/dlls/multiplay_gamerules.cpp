@@ -267,6 +267,10 @@ void CHalfLifeMultiplay::EndRoundMessage(const char *sentence, ScenarioEventEndR
 	}
 
 	UTIL_LogPrintf("World triggered \"Round_End\"\n");
+
+#ifdef REGAMEDLL_ADD
+	FireTargets("game_round_end", nullptr, nullptr, USE_TOGGLE, 0.0);
+#endif
 }
 
 void CHalfLifeMultiplay::ReadMultiplayCvars()
@@ -648,6 +652,7 @@ void EXT_FUNC CHalfLifeMultiplay::__API_HOOK(CleanUpMap)()
 	UTIL_RestartOther("env_beam");
 	UTIL_RestartOther("env_laser");
 	UTIL_RestartOther("trigger_auto");
+	UTIL_RestartOther("trigger_multiple");
 #endif
 
 	// Remove grenades and C4
@@ -2852,6 +2857,10 @@ void EXT_FUNC CHalfLifeMultiplay::OnRoundFreezeEnd()
 	{
 		TheCareerTasks->HandleEvent(EVENT_ROUND_START);
 	}
+
+#ifdef REGAMEDLL_ADD
+	FireTargets("game_round_freeze_end", nullptr, nullptr, USE_TOGGLE, 0.0);
+#endif
 }
 
 void CHalfLifeMultiplay::CheckFreezePeriodExpired()
@@ -4121,6 +4130,16 @@ void EXT_FUNC CHalfLifeMultiplay::__API_HOOK(DeathNotice)(CBasePlayer *pVictim, 
 			iDeathMessageFlags |= PLAYERDEATH_KILLRARITY;
 		}
 
+#ifdef REGAMEDLL_ADD
+		iDeathMessageFlags &= UTIL_ReadFlags(deathmsg_flags.string); // leave only allowed bitsums for extra info
+
+		// Send the victim's death position only
+		// 1. if it is not a free for all mode
+		// 2. if the attacker is a player and they are not teammates
+		if (IsFreeForAll() || !pKiller || PlayerRelationship(pKiller, pVictim) == GR_TEAMMATE)
+			iDeathMessageFlags &= ~PLAYERDEATH_POSITION; // do not send a position
+#endif
+
 		SendDeathMessage(pKiller, pVictim, pAssister, pevInflictor, killer_weapon_name, iDeathMessageFlags, iRarityOfKill);
 
 		// Updates the stats of who has killed whom
@@ -5271,20 +5290,19 @@ int CHalfLifeMultiplay::GetRarityOfKill(CBaseEntity *pKiller, CBasePlayer *pVict
 	if (pVictim->m_bHeadshotKilled)
 		iRarity |= KILLRARITY_HEADSHOT;
 
-	// The killer player was blind
 	CBasePlayer *pKillerPlayer = static_cast<CBasePlayer *>(pKiller);
-	if (pKillerPlayer && pKillerPlayer->IsPlayer())
+	if (pKillerPlayer && pKillerPlayer->IsPlayer() && pKillerPlayer != pVictim)
 	{
 		WeaponClassType weaponClass = AliasToWeaponClass(killerWeaponName);
-		if (pKillerPlayer != pVictim
-			&& weaponClass != WEAPONCLASS_NONE
-			&& weaponClass != WEAPONCLASS_KNIFE
-			&& weaponClass != WEAPONCLASS_GRENADE)
+		if (weaponClass != WEAPONCLASS_NONE &&
+			weaponClass != WEAPONCLASS_KNIFE &&
+			weaponClass != WEAPONCLASS_GRENADE)
 		{
 			// The killer player kills the victim through the walls
 			if (pVictim->GetDmgPenetrationLevel() > 0)
 				iRarity |= KILLRARITY_PENETRATED;
 
+			// The killer player was blind
 			if (pKillerPlayer->IsFullyBlind())
 				iRarity |= KILLRARITY_KILLER_BLIND;
 
@@ -5296,6 +5314,10 @@ int CHalfLifeMultiplay::GetRarityOfKill(CBaseEntity *pKiller, CBasePlayer *pVict
 			const Vector inEyePos = pKillerPlayer->EyePosition();
 			if (TheCSBots()->IsLineBlockedBySmoke(&inEyePos, &pVictim->pev->origin))
 				iRarity |= KILLRARITY_THRUSMOKE;
+
+			// The killer player kills the victim while in air
+			if (!(pKillerPlayer->pev->flags & FL_ONGROUND))
+				iRarity |= KILLRARITY_INAIR;
 		}
 
 		// Calculate # of unanswered kills between killer & victim
@@ -5308,6 +5330,10 @@ int CHalfLifeMultiplay::GetRarityOfKill(CBaseEntity *pKiller, CBasePlayer *pVict
 		int iKillsUnanswered = pVictim->CSPlayer()->m_iNumKilledByUnanswered[iAttackerEntityIndex - 1] + 1;
 		if (iKillsUnanswered == CS_KILLS_FOR_DOMINATION || pKillerPlayer->CSPlayer()->IsPlayerDominated(pVictim->entindex() - 1))
 		{
+			// Sets the beginning of domination over the victim until he takes revenge
+			if (iKillsUnanswered == CS_KILLS_FOR_DOMINATION)
+				iRarity |= KILLRARITY_DOMINATION_BEGAN;
+
 			// this is the Nth unanswered kill between killer and victim, killer is now dominating victim
 			iRarity |= KILLRARITY_DOMINATION;
 
@@ -5343,32 +5369,13 @@ LINK_HOOK_CLASS_VOID_CUSTOM_CHAIN(CHalfLifeMultiplay, CSGameRules, SendDeathMess
 //
 void EXT_FUNC CHalfLifeMultiplay::__API_HOOK(SendDeathMessage)(CBaseEntity *pKiller, CBasePlayer *pVictim, CBasePlayer *pAssister, entvars_t *pevInflictor, const char *killerWeaponName, int iDeathMessageFlags, int iRarityOfKill)
 {
-	CBasePlayer *pKillerPlayer = (pKiller && pKiller->IsPlayer()) ? static_cast<CBasePlayer *>(pKiller) : nullptr;
-
-	// Only the player can dominate the victim
-	if ((iRarityOfKill & KILLRARITY_DOMINATION) && pKillerPlayer && pVictim != pKillerPlayer)
-	{
-		// Sets the beginning of domination over the victim until he takes revenge
-		int iKillsUnanswered = pVictim->CSPlayer()->m_iNumKilledByUnanswered[pKillerPlayer->entindex() - 1] + 1;
-		if (iKillsUnanswered == CS_KILLS_FOR_DOMINATION)
-			iRarityOfKill |= KILLRARITY_DOMINATION_BEGAN;
-	}
-
 	MESSAGE_BEGIN(MSG_ALL, gmsgDeathMsg);
 		WRITE_BYTE((pKiller && pKiller->IsPlayer()) ? pKiller->entindex() : 0);	// the killer
 		WRITE_BYTE(pVictim->entindex());		// the victim
-		WRITE_BYTE(pVictim->m_bHeadshotKilled);	// is killed headshot
+		WRITE_BYTE((iRarityOfKill & KILLRARITY_HEADSHOT));	// is killed headshot
 		WRITE_STRING(killerWeaponName);			// what they were killed by (should this be a string?)
 
 #ifdef REGAMEDLL_ADD
-	iDeathMessageFlags &= UTIL_ReadFlags(deathmsg_flags.string); // leave only allowed bitsums for extra info
-
-	// Send the victim's death position only
-	// 1. if it is not a free for all mode
-	// 2. if the attacker is a player and they are not teammates
-	if (IsFreeForAll() || !pKillerPlayer || PlayerRelationship(pKillerPlayer, pVictim) == GR_TEAMMATE)
-		iDeathMessageFlags &= ~PLAYERDEATH_POSITION; // do not send a position
-
 	if (iDeathMessageFlags > 0)
 	{
 		WRITE_LONG(iDeathMessageFlags);
@@ -5384,7 +5391,7 @@ void EXT_FUNC CHalfLifeMultiplay::__API_HOOK(SendDeathMessage)(CBaseEntity *pKil
 
 		// Writes the index of the teammate who assisted in the kill
 		if (iDeathMessageFlags & PLAYERDEATH_ASSISTANT)
-			WRITE_BYTE(pAssister->entindex());
+			WRITE_BYTE((pAssister && pAssister->IsPlayer()) ? pAssister->entindex() : 0);
 
 		// Writes the rarity classification of the kill
 		if (iDeathMessageFlags & PLAYERDEATH_KILLRARITY)
