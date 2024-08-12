@@ -337,6 +337,10 @@ void CCSBotManager::ClientDisconnect(CBasePlayer *pPlayer)
 	pPlayer = GetClassPtr<CCSPlayer>((CBasePlayer *)pevTemp);
 	AddEntityHashValue(pPlayer->pev, STRING(pPlayer->pev->classname), CLASSNAME);
 	pPlayer->pev->flags = FL_DORMANT;
+
+#ifdef REGAMEDLL_FIXES
+	pPlayer->has_disconnected = true;
+#endif
 }
 
 void PrintAllEntities()
@@ -396,15 +400,18 @@ void CCSBotManager::ServerCommand(const char *pcmd)
 		for (int i = 1; i <= gpGlobals->maxClients; i++)
 		{
 			CBasePlayer *pPlayer = UTIL_PlayerByIndex(i);
-			if (!pPlayer)
-				continue;
 
-			if (FNullEnt(pPlayer->pev))
+			if (!UTIL_IsValidPlayer(pPlayer))
 				continue;
 
 			const char *name = STRING(pPlayer->pev->netname);
 			if (FStrEq(name, ""))
 				continue;
+
+#ifdef REGAMEDLL_FIXES
+			if (pPlayer->pev->deadflag != DEAD_NO)
+				continue;
+#endif
 
 			if (pPlayer->IsBot())
 			{
@@ -422,13 +429,17 @@ void CCSBotManager::ServerCommand(const char *pcmd)
 		else
 			kickThemAll = false;
 
+#ifdef REGAMEDLL_ADD
+		bool fillMode = FStrEq(cv_bot_quota_mode.string, "fill");
+#else
+		bool fillMode = false;
+#endif
+
 		for (int i = 1; i <= gpGlobals->maxClients; i++)
 		{
 			CBasePlayer *pPlayer = UTIL_PlayerByIndex(i);
-			if (!pPlayer)
-				continue;
 
-			if (FNullEnt(pPlayer->pev))
+			if (!UTIL_IsValidPlayer(pPlayer))
 				continue;
 
 			const char *name = STRING(pPlayer->pev->netname);
@@ -443,7 +454,11 @@ void CCSBotManager::ServerCommand(const char *pcmd)
 					// adjust bot quota so kicked bot is not immediately added back in
 					int newQuota = cv_bot_quota.value - 1;
 					SERVER_COMMAND(UTIL_VarArgs("kick \"%s\"\n", name));
-					CVAR_SET_FLOAT("bot_quota", clamp(newQuota, 0, int(cv_bot_quota.value)));
+
+					if (kickThemAll || !fillMode)
+					{
+						CVAR_SET_FLOAT("bot_quota", clamp(newQuota, 0, int(cv_bot_quota.value)));
+					}
 				}
 			}
 		}
@@ -665,6 +680,9 @@ void CCSBotManager::ServerCommand(const char *pcmd)
 			CBaseEntity *pEntity = nullptr;
 			while ((pEntity = UTIL_FindEntityByClassname(pEntity, "player")))
 			{
+				if (FNullEnt(pEntity->edict()))
+					break;
+
 				if (!pEntity->IsPlayer())
 					continue;
 
@@ -745,6 +763,23 @@ void CCSBotManager::ServerCommand(const char *pcmd)
 
 BOOL CCSBotManager::ClientCommand(CBasePlayer *pPlayer, const char *pcmd)
 {
+#ifdef REGAMEDLL_ADD
+	if (pPlayer->IsBot())
+		return FALSE;
+
+	if (cv_bot_mimic.value == pPlayer->entindex())
+	{
+		// Bots mimic our client commands
+		ForEachPlayer([pPlayer, pcmd](CBasePlayer *bot)
+		{
+			if (pPlayer != bot && bot->IsBot())
+				bot->ClientCommand(pcmd, CMD_ARGV_(1));
+
+			return true;
+		});
+	}
+#endif
+
 	return FALSE;
 }
 
@@ -787,7 +822,8 @@ bool CCSBotManager::BotAddCommand(BotProfileTeamType team, bool isFromConsole)
 			// decrease the bot quota
 			if (!isFromConsole)
 			{
-				CVAR_SET_FLOAT("bot_quota", cv_bot_quota.value - 1);
+				int newQuota = cv_bot_quota.value - 1;
+				CVAR_SET_FLOAT("bot_quota", clamp(newQuota, 0, (int)cv_bot_quota.value));
 			}
 #endif
 
@@ -821,7 +857,8 @@ bool CCSBotManager::BotAddCommand(BotProfileTeamType team, bool isFromConsole)
 		if (isFromConsole)
 		{
 			// increase the bot quota to account for manually added bot
-			CVAR_SET_FLOAT("bot_quota", cv_bot_quota.value + 1);
+			int newQuota = cv_bot_quota.value + 1;
+			CVAR_SET_FLOAT("bot_quota", clamp(newQuota, 0, gpGlobals->maxClients));
 		}
 	}
 #ifdef REGAMEDLL_FIXES
@@ -830,7 +867,8 @@ bool CCSBotManager::BotAddCommand(BotProfileTeamType team, bool isFromConsole)
 		// decrease the bot quota
 		if (!isFromConsole)
 		{
-			CVAR_SET_FLOAT("bot_quota", cv_bot_quota.value - 1);
+			int newQuota = cv_bot_quota.value - 1;
+			CVAR_SET_FLOAT("bot_quota", clamp(newQuota, 0, (int)cv_bot_quota.value));
 		}
 	}
 #endif
@@ -860,10 +898,17 @@ void CCSBotManager::MaintainBotQuota()
 	int desiredBotCount = int(cv_bot_quota.value);
 	int occupiedBotSlots = UTIL_BotsInGame();
 
+	bool isRoundInDeathmatch = false;
+
+#ifdef REGAMEDLL_ADD
+	if (round_infinite.value > 0)
+		isRoundInDeathmatch = true; // is no round end gameplay
+#endif
+
 	// isRoundInProgress is true if the round has progressed far enough that new players will join as dead.
 	bool isRoundInProgress = CSGameRules()->IsGameStarted() &&
 							 !TheCSBots()->IsRoundOver() &&
-							 (CSGameRules()->GetRoundElapsedTime() >= CSGameRules()->GetRoundRespawnTime());
+							 (CSGameRules()->GetRoundRespawnTime() != -1 && CSGameRules()->GetRoundElapsedTime() >= CSGameRules()->GetRoundRespawnTime()) && !isRoundInDeathmatch;
 
 #ifdef REGAMEDLL_ADD
 	if (FStrEq(cv_bot_quota_mode.string, "fill"))
@@ -872,7 +917,7 @@ void CCSBotManager::MaintainBotQuota()
 		// unless the round is already in progress, in which case we play with what we've been dealt
 		if (!isRoundInProgress)
 		{
-			desiredBotCount = Q_max(0, desiredBotCount - humanPlayersInGame + spectatorPlayersInGame);
+			desiredBotCount = Q_max(0, desiredBotCount - humanPlayersInGame);
 		}
 		else
 		{
@@ -919,13 +964,15 @@ void CCSBotManager::MaintainBotQuota()
 	if (cv_bot_auto_vacate.value > 0.0)
 		desiredBotCount = Q_min(desiredBotCount, gpGlobals->maxClients - (humanPlayersInGame + 1));
 	else
-		desiredBotCount = Q_min(desiredBotCount, gpGlobals->maxClients - humanPlayersInGame + spectatorPlayersInGame);
+		desiredBotCount = Q_min(desiredBotCount, gpGlobals->maxClients - humanPlayersInGame);
 
 #ifdef REGAMEDLL_FIXES
 	// Try to balance teams, if we are in the first specified seconds of a round and bots can join either team.
-	if (occupiedBotSlots > 0 && desiredBotCount == occupiedBotSlots && CSGameRules()->IsGameStarted())
+	if (occupiedBotSlots > 0 && desiredBotCount == occupiedBotSlots && (CSGameRules()->IsGameStarted() || isRoundInDeathmatch))
 	{
-		if (CSGameRules()->GetRoundElapsedTime() < CSGameRules()->GetRoundRespawnTime()) // new bots can still spawn during this time
+		if (isRoundInDeathmatch ||
+			(CSGameRules()->GetRoundRespawnTime() == -1 || // means no time limit
+			CSGameRules()->GetRoundElapsedTime() < CSGameRules()->GetRoundRespawnTime())) // new bots can still spawn during this time
 		{
 			if (autoteambalance.value > 0.0f)
 			{
@@ -1042,7 +1089,8 @@ void CCSBotManager::MaintainBotQuota()
 			UTIL_KickBotFromTeam(TERRORIST);
 		}
 
-		CVAR_SET_FLOAT("bot_quota", cv_bot_quota.value - 1.0f);
+		int newQuota = cv_bot_quota.value - 1;
+		CVAR_SET_FLOAT("bot_quota", clamp(newQuota, 0, (int)cv_bot_quota.value));
 	}
 }
 
@@ -1580,7 +1628,8 @@ void CCSBotManager::OnFreeEntPrivateData(CBaseEntity *pEntity)
 	for (int i = 1; i <= gpGlobals->maxClients; i++)
 	{
 		CBasePlayer *pPlayer = UTIL_PlayerByIndex(i);
-		if (!pPlayer || pPlayer->IsDormant())
+
+		if (!UTIL_IsValidPlayer(pPlayer))
 			continue;
 
 		if (pPlayer->IsBot())

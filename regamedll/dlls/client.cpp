@@ -438,6 +438,9 @@ NOXREF int CountTeams()
 		if (FNullEnt(pEntity->edict()))
 			break;
 
+		if (pEntity->IsDormant())
+			continue;
+
 		CBasePlayer *pPlayer = GetClassPtr<CCSPlayer>((CBasePlayer *)pEntity->pev);
 
 		if (pPlayer->m_iTeam == UNASSIGNED)
@@ -499,7 +502,8 @@ int CountTeamPlayers(int iTeam)
 		if (pEntity->IsDormant())
 			continue;
 
-		if (GetClassPtr<CCSPlayer>((CBasePlayer *)pEntity->pev)->m_iTeam == iTeam)
+		CBasePlayer *pPlayer = GetClassPtr<CCSPlayer>((CBasePlayer *)pEntity->pev);
+		if (pPlayer->m_iTeam == iTeam)
 		{
 			nCount++;
 		}
@@ -533,6 +537,9 @@ void ProcessKickVote(CBasePlayer *pVotingPlayer, CBasePlayer *pKickPlayer)
 	{
 		if (FNullEnt(pTempEntity->edict()))
 			break;
+
+		if (pTempEntity->IsDormant())
+			continue;
 
 		pTempPlayer = GetClassPtr<CCSPlayer>((CBasePlayer *)pTempEntity->pev);
 
@@ -570,6 +577,9 @@ void ProcessKickVote(CBasePlayer *pVotingPlayer, CBasePlayer *pKickPlayer)
 		{
 			if (FNullEnt(pTempEntity->edict()))
 				break;
+
+			if (pTempEntity->IsDormant())
+				continue;
 
 			pTempPlayer = GetClassPtr<CCSPlayer>((CBasePlayer *)pTempEntity->pev);
 
@@ -974,6 +984,9 @@ void Host_Say(edict_t *pEntity, BOOL teamonly)
 			continue;
 
 		if (pReceiver->edict() == pEntity)
+			continue;
+
+		if (pReceiver->IsDormant())
 			continue;
 
 		// Not a client ? (should never be true)
@@ -2343,6 +2356,9 @@ CBaseEntity *EntityFromUserID(int userID)
 		if (FNullEnt(pTempEntity->edict()))
 			break;
 
+		if (pTempEntity->IsDormant())
+			continue;
+
 		CBasePlayer *pTempPlayer = GetClassPtr<CCSPlayer>((CBasePlayer *)pTempEntity->pev);
 
 		if (pTempPlayer->m_iTeam != UNASSIGNED && userID == GETPLAYERUSERID(pTempEntity->edict()))
@@ -2362,6 +2378,9 @@ NOXREF int CountPlayersInServer()
 	{
 		if (FNullEnt(pTempEntity->edict()))
 			break;
+
+		if (pTempEntity->IsDormant())
+			continue;
 
 		CBasePlayer *pTempPlayer = GetClassPtr<CCSPlayer>((CBasePlayer *)pTempEntity->pev);
 
@@ -2608,6 +2627,15 @@ void EXT_FUNC InternalCommand(edict_t *pEntity, const char *pcmd, const char *pa
 				return;
 			}
 
+#ifdef REGAMEDLL_ADD
+			static const int flagKick = UTIL_ReadFlags("k");
+			if ((flagKick & UTIL_ReadFlags(vote_flags.string)) == 0)
+			{
+				ClientPrint(pPlayer->pev, HUD_PRINTCENTER, "#Command_Not_Available");
+				return;
+			}
+#endif
+
 			pPlayer->m_flNextVoteTime = gpGlobals->time + 3;
 
 			if (pPlayer->m_iTeam != UNASSIGNED)
@@ -2689,11 +2717,20 @@ void EXT_FUNC InternalCommand(edict_t *pEntity, const char *pcmd, const char *pa
 				return;
 			}
 
+#ifdef REGAMEDLL_ADD
+			static const int flagMap = UTIL_ReadFlags("m");
+			if ((flagMap & UTIL_ReadFlags(vote_flags.string)) == 0)
+			{
+				ClientPrint(pPlayer->pev, HUD_PRINTCENTER, "#Command_Not_Available");
+				return;
+			}
+#endif
+
 			pPlayer->m_flNextVoteTime = gpGlobals->time + 3;
 
 			if (pPlayer->m_iTeam != UNASSIGNED)
 			{
-				if (gpGlobals->time < 180)
+				if (gpGlobals->time < CGameRules::GetVotemapMinElapsedTime())
 				{
 					ClientPrint(pPlayer->pev, HUD_PRINTCONSOLE, "#Cannot_Vote_Map");
 					return;
@@ -3343,7 +3380,11 @@ void EXT_FUNC InternalCommand(edict_t *pEntity, const char *pcmd, const char *pa
 						for (int i = 1; i <= gpGlobals->maxClients; i++)
 						{
 							CBasePlayer *pObserver = UTIL_PlayerByIndex(i);
-							if (pObserver && pObserver->IsObservingPlayer(pPlayer))
+
+							if (!UTIL_IsValidPlayer(pObserver))
+								continue;
+
+							if (pObserver->IsObservingPlayer(pPlayer))
 							{
 								EMIT_SOUND(ENT(pObserver->pev), CHAN_ITEM, "items/nvg_off.wav", RANDOM_FLOAT(0.92, 1), ATTN_NORM);
 
@@ -3368,7 +3409,11 @@ void EXT_FUNC InternalCommand(edict_t *pEntity, const char *pcmd, const char *pa
 						for (int i = 1; i <= gpGlobals->maxClients; i++)
 						{
 							CBasePlayer *pObserver = UTIL_PlayerByIndex(i);
-							if (pObserver && pObserver->IsObservingPlayer(pPlayer))
+
+							if (!UTIL_IsValidPlayer(pObserver))
+								continue;
+
+							if (pObserver->IsObservingPlayer(pPlayer))
 							{
 								EMIT_SOUND(ENT(pObserver->pev), CHAN_ITEM, "items/nvg_on.wav", RANDOM_FLOAT(0.92, 1), ATTN_NORM);
 
