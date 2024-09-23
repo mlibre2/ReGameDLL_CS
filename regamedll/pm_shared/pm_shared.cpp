@@ -123,7 +123,7 @@ void PM_InitTextureTypes()
 		j = Q_min(j, MAX_TEXTURENAME_LENGHT - 1 + i);
 		buffer[j] = '\0';
 
-		Q_strcpy(&(pm_grgszTextureName[pm_gcTextures++][0]), &(buffer[i]));
+		Q_strlcpy(pm_grgszTextureName[pm_gcTextures++], &(buffer[i]));
 	}
 
 	// Must use engine to free since we are in a .dll
@@ -364,8 +364,7 @@ void PM_CatagorizeTextureType()
 	if (*pTextureName == '{' || *pTextureName == '!' || *pTextureName == '~' || *pTextureName == ' ')
 		pTextureName++;
 
-	Q_strcpy(pmove->sztexturename, pTextureName);
-	pmove->sztexturename[MAX_TEXTURENAME_LENGHT - 1] = '\0';
+	Q_strlcpy(pmove->sztexturename, pTextureName, MAX_TEXTURENAME_LENGHT);
 
 	// get texture type
 	pmove->chtexturetype = PM_FindTextureType(pmove->sztexturename);
@@ -1450,7 +1449,7 @@ void PM_CategorizePosition()
 
 	// Do not stick to the ground of an OBSERVER or NOCLIP mode
 #ifdef REGAMEDLL_FIXES
-	if (pmove->movetype == MOVETYPE_NOCLIP || pmove->movetype == MOVETYPE_NONE)
+	if (pmoveplayer->m_MovementVersion.IsAtLeast(1, 0) && (pmove->movetype == MOVETYPE_NOCLIP || pmove->movetype == MOVETYPE_NONE))
 	{
 		pmove->onground = -1;
 		return;
@@ -1737,12 +1736,15 @@ void PM_SpectatorMove()
 
 		addspeed = wishspeed - currentspeed;
 
-#ifndef REGAMEDLL_FIXES
 		if (addspeed <= 0)
-			return;
-#else
-		if (addspeed > 0)
+		{
+#ifdef REGAMEDLL_FIXES
+			if (pmoveplayer->m_MovementVersion.IsLessThan(1, 0))
 #endif
+				return;
+		}
+
+		if (addspeed > 0)
 		{
 			accelspeed = pmove->movevars->accelerate * pmove->frametime * wishspeed;
 			if (accelspeed > addspeed)
@@ -1844,7 +1846,7 @@ LINK_HOOK_VOID_CHAIN2(PM_UnDuck)
 void EXT_FUNC __API_HOOK(PM_UnDuck)()
 {
 #ifdef REGAMEDLL_ADD
-	if (unduck_method.value)
+	if (unduck_method.value || (pmove->iuser3 & PLAYER_PREVENT_DDUCK))
 #endif
 	{
 #ifdef REGAMEDLL_FIXES
@@ -3378,4 +3380,9 @@ void EXT_FUNC __API_HOOK(PM_Init)(struct playermove_s *ppmove)
 	PM_InitTextureTypes();
 
 	pm_shared_initialized = TRUE;
+}
+
+const char *PM_ServerVersion()
+{
+	return PM_VERSION_STRING(PM_VERSION_MAJOR, PM_VERSION_MINOR, PM_VERSION_PATCH);
 }
